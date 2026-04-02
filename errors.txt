@@ -1,0 +1,14 @@
+﻿src/routes/owner.ts(175,16): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+src/routes/owner.ts(196,16): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+src/routes/public.ts(47,16): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/routes/public.ts(70,27): error TS2551: Property 'salon' does not exist on type '{ name: string; id: string; createdAt: Date; salonId: string; userId: string | null; bio: string | null; photoUrl: string | null; specialties: string[]; slotDuration: number; isActive: boolean; }'. Did you mean 'salonId'?
+src/routes/public.ts(78,78): error TS2551: Property 'salon' does not exist on type '{ name: string; id: string; createdAt: Date; salonId: string; userId: string | null; bio: string | null; photoUrl: string | null; specialties: string[]; slotDuration: number; isActive: boolean; }'. Did you mean 'salonId'?
+src/routes/public.ts(79,82): error TS2551: Property 'salon' does not exist on type '{ name: string; id: string; createdAt: Date; salonId: string; userId: string | null; bio: string | null; photoUrl: string | null; specialties: string[]; slotDuration: number; isActive: boolean; }'. Did you mean 'salonId'?
+src/routes/public.ts(83,9): error TS2322: Type 'string | string[]' is not assignable to type 'string | StringFilter<"Appointment"> | undefined'.
+  Type 'string[]' is not assignable to type 'string | StringFilter<"Appointment"> | undefined'.
+src/routes/public.ts(93,15): error TS2551: Property 'salon' does not exist on type '{ name: string; id: string; createdAt: Date; salonId: string; userId: string | null; bio: string | null; photoUrl: string | null; specialties: string[]; slotDuration: number; isActive: boolean; }'. Did you mean 'salonId'?
+src/routes/public.ts(232,16): error TS2322: Type 'string | string[]' is not assignable to type 'string | (AppointmentStylistIdStartTimeCompoundUniqueInput & string) | undefined'.
+  Type 'string[]' is not assignable to type 'string | (AppointmentStylistIdStartTimeCompoundUniqueInput & string) | undefined'.
+    Type 'string[]' is not assignable to type 'AppointmentStylistIdStartTimeCompoundUniqueInput & string'.
+      Type 'string[]' is missing the following properties from type 'AppointmentStylistIdStartTimeCompoundUniqueInput': stylistId, startTime
