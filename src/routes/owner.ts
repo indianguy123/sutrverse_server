@@ -48,15 +48,14 @@ router.get('/dashboard', async (req: Request, res: Response) => {
           orderBy: { startTime: 'asc' },
         }),
 
-        // Weekly revenue
-        prisma.appointment.aggregate({
+        // Weekly revenue appointments
+        prisma.appointment.findMany({
           where: {
             stylist: { salonId },
             status: 'COMPLETED',
             startTime: { gte: weekStart },
           },
-          _sum: { price: true },
-          _count: { id: true },
+          select: { id: true, startTime: true, price: true },
         }),
 
         // Utilization per stylist today
@@ -104,6 +103,20 @@ router.get('/dashboard', async (req: Request, res: Response) => {
         prisma.stylist.count({ where: { salonId, isActive: true } }),
       ]);
 
+    let weeklyRevenueSum = 0;
+    const dailyEarningsMap: Record<string, number> = {};
+    revenueAgg.forEach((a: any) => {
+      const price = Number(a.price || 0);
+      weeklyRevenueSum += price;
+      const day = dayjs(a.startTime).tz(tz).format('ddd');
+      dailyEarningsMap[day] = (dailyEarningsMap[day] || 0) + price;
+    });
+
+    const dailyRevenue = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => ({
+      name: day,
+      total: dailyEarningsMap[day] || 0
+    }));
+
     // Build heatmap data: group by day and hour
     const heatmap: Record<string, Record<number, number>> = {};
     weekDensity.forEach((appt: any) => {
@@ -118,11 +131,12 @@ router.get('/dashboard', async (req: Request, res: Response) => {
       data: {
         kpis: {
           todayBookings: todayBookings.length,
-          weeklyRevenue: revenueAgg._sum.price?.toString() || '0',
-          weeklyCompleted: revenueAgg._count.id,
+          weeklyRevenue: weeklyRevenueSum.toString(),
+          weeklyCompleted: revenueAgg.length,
           activeStylists,
           utilization: utilizationGroups,
         },
+        dailyRevenue,
         todayAppointments: todayBookings,
         upcoming: upcomingAppts,
         heatmap,
@@ -289,6 +303,119 @@ router.get('/appointments', async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error('[owner/appointments] Error:', err);
+    res.status(500).json({ data: null, error: 'Internal server error' });
+  }
+});
+
+// PATCH /api/owner/appointments/:id/cancel - cancel appointment
+router.patch('/appointments/:id/cancel', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id as string;
+    const salonId = process.env.SALON_ID;
+
+    // Verify it belongs to this salon
+    const appt = await prisma.appointment.findUnique({
+      where: { id },
+      include: { stylist: true },
+    });
+
+    if (!appt || appt.stylist.salonId !== salonId) {
+      res.status(404).json({ data: null, error: 'Appointment not found' });
+      return;
+    }
+
+    if (appt.status === 'CANCELLED') {
+      res.status(400).json({ data: null, error: 'Appointment is already cancelled' });
+      return;
+    }
+
+    const updated = await prisma.appointment.update({
+      where: { id },
+      data: { status: 'CANCELLED' },
+      include: { stylist: { select: { name: true, photoUrl: true } } },
+    });
+
+    res.json({ data: updated, error: null });
+  } catch (err) {
+    console.error('[owner/appointments/:id/cancel] Error:', err);
+    res.status(500).json({ data: null, error: 'Internal server error' });
+  }
+});
+
+// GET /api/owner/export-data - fetch raw records for Excel writing
+router.get('/export-data', async (req: Request, res: Response) => {
+  try {
+    const salonId = process.env.SALON_ID;
+    if (!salonId) {
+      res.status(500).json({ data: null, error: 'SALON_ID not configured' });
+      return;
+    }
+
+    const [stylists, upcomingBookings, revenues] = await Promise.all([
+      prisma.stylist.findMany({
+        where: { salonId }
+      }),
+      prisma.appointment.findMany({
+        where: {
+          stylist: { salonId },
+          status: 'CONFIRMED',
+          startTime: { gte: new Date() }
+        },
+        include: { stylist: { select: { name: true } } },
+        orderBy: { startTime: 'asc' }
+      }),
+      prisma.appointment.findMany({
+        where: {
+          stylist: { salonId },
+          status: 'COMPLETED'
+        },
+        include: { stylist: { select: { name: true } } },
+        orderBy: { startTime: 'desc' }
+      })
+    ]);
+
+    // Format Data logically for worksheet conversion
+    const formattedStylists = stylists.map(s => ({
+      ID: s.id,
+      Name: s.name,
+      Specialties: s.specialties.join(', '),
+      Slot_Duration_Mins: s.slotDuration,
+      Active: s.isActive ? 'Yes' : 'No'
+    }));
+
+    const formattedUpcoming = upcomingBookings.map(b => ({
+      ID: b.id,
+      Customer: b.customerName,
+      Phone: b.customerPhone || 'N/A',
+      Email: b.customerEmail || 'N/A',
+      Stylist: b.stylist?.name || 'N/A',
+      Service: b.service,
+      Start_Time: b.startTime,
+      End_Time: b.endTime,
+      Walk_In: b.isWalkIn ? 'Yes' : 'No',
+      Price_Assigned: b.price ? Number(b.price) : 0
+    }));
+
+    const formattedRevenues = revenues.map(r => ({
+      ID: r.id,
+      Customer: r.customerName,
+      Stylist: r.stylist?.name || 'N/A',
+      Service: r.service,
+      Start_Time: r.startTime,
+      Price_Earned: r.price ? Number(r.price) : 0,
+      Walk_In: r.isWalkIn ? 'Yes' : 'No'
+    }));
+
+    res.json({
+      data: {
+        stylists: formattedStylists,
+        upcomingBookings: formattedUpcoming,
+        revenues: formattedRevenues
+      },
+      error: null
+    });
+  } catch (err) {
+    console.error('[owner/export-data] Error:', err);
     res.status(500).json({ data: null, error: 'Internal server error' });
   }
 });

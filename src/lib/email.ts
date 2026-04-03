@@ -1,8 +1,14 @@
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 import { dayjs } from './time.js';
 
-const resend = process.env.RESEND_API_KEY
-  ? new Resend(process.env.RESEND_API_KEY)
+const transporter = (process.env.EMAIL_USER && process.env.EMAIL_APP_PASSWORD)
+  ? nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_APP_PASSWORD,
+      },
+    })
   : null;
 
 export async function sendBookingConfirmation(params: {
@@ -14,8 +20,8 @@ export async function sendBookingConfirmation(params: {
   stylist: { name: string };
   salon: { name: string; timezone: string; email?: string | null };
 }) {
-  if (!resend) {
-    console.warn('[email] RESEND_API_KEY not configured — skipping email');
+  if (!transporter) {
+    console.warn('[email] EMAIL_USER or EMAIL_APP_PASSWORD not configured \u2014 skipping email');
     return;
   }
 
@@ -23,14 +29,14 @@ export async function sendBookingConfirmation(params: {
     .tz(params.salon.timezone)
     .format('dddd, MMMM D YYYY [at] h:mm A');
 
-  await resend.emails.send({
-    from: 'bookings@yourdomain.com',
+  await transporter.sendMail({
+    from: `"Salon Booking" <${process.env.EMAIL_USER}>`,
     replyTo: params.salon.email ?? undefined,
     to: params.customerEmail,
     subject: `Your appointment at ${params.salon.name} is confirmed`,
     html: `
       <div style="font-family:sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a;">
-        <h1 style="font-size:24px;font-weight:600;margin-bottom:8px;">Booking Confirmed ✓</h1>
+        <h1 style="font-size:24px;font-weight:600;margin-bottom:8px;">Booking Confirmed \u2713</h1>
         <p style="color:#555;margin-bottom:24px;">
           Hi ${params.customerName}, your appointment is booked.
         </p>
