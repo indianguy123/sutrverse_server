@@ -9,11 +9,12 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
-    "db:seed": "tsx prisma/seed.ts",
+    "db:seed": "tsx database/seed.ts",
     "db:studio": "prisma studio"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "schema": "database/schema.prisma",
+    "seed": "tsx database/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.21.0",
