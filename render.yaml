@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: salon-server
+    env: node
+    rootDir: server
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CLIENT_URL
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_APP_PASSWORD
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: SALON_ID
+        sync: false
