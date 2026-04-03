@@ -3,6 +3,16 @@ import { prisma } from '../lib/prisma.js';
 import { requireAuth } from '../lib/auth.js';
 import { dayjs, todayInTz, getDayBoundsUtc, getWeekBoundsUtc } from '../lib/time.js';
 const router = Router();
+import multer from 'multer';
+import { v2 as cloudinary } from 'cloudinary';
+// Configure cloudinary
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+// Configure multer
+const upload = multer({ storage: multer.memoryStorage() });
 // All owner routes require OWNER role
 router.use(requireAuth('OWNER'));
 // GET /api/owner/dashboard — single aggregated response
@@ -41,15 +51,14 @@ router.get('/dashboard', async (req, res) => {
                 },
                 orderBy: { startTime: 'asc' },
             }),
-            // Weekly revenue
-            prisma.appointment.aggregate({
+            // Weekly revenue appointments
+            prisma.appointment.findMany({
                 where: {
                     stylist: { salonId },
                     status: 'COMPLETED',
                     startTime: { gte: weekStart },
                 },
-                _sum: { price: true },
-                _count: { id: true },
+                select: { id: true, startTime: true, price: true },
             }),
             // Utilization per stylist today
             prisma.appointment.groupBy({
@@ -92,6 +101,18 @@ router.get('/dashboard', async (req, res) => {
             // Active stylist count
             prisma.stylist.count({ where: { salonId, isActive: true } }),
         ]);
+        let weeklyRevenueSum = 0;
+        const dailyEarningsMap = {};
+        revenueAgg.forEach((a) => {
+            const price = Number(a.price || 0);
+            weeklyRevenueSum += price;
+            const day = dayjs(a.startTime).tz(tz).format('ddd');
+            dailyEarningsMap[day] = (dailyEarningsMap[day] || 0) + price;
+        });
+        const dailyRevenue = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => ({
+            name: day,
+            total: dailyEarningsMap[day] || 0
+        }));
         // Build heatmap data: group by day and hour
         const heatmap = {};
         weekDensity.forEach((appt) => {
@@ -106,11 +127,12 @@ router.get('/dashboard', async (req, res) => {
             data: {
                 kpis: {
                     todayBookings: todayBookings.length,
-                    weeklyRevenue: revenueAgg._sum.price?.toString() || '0',
-                    weeklyCompleted: revenueAgg._count.id,
+                    weeklyRevenue: weeklyRevenueSum.toString(),
+                    weeklyCompleted: revenueAgg.length,
                     activeStylists,
                     utilization: utilizationGroups,
                 },
+                dailyRevenue,
                 todayAppointments: todayBookings,
                 upcoming: upcomingAppts,
                 heatmap,
@@ -122,6 +144,30 @@ router.get('/dashboard', async (req, res) => {
     catch (err) {
         console.error('[owner/dashboard] Error:', err);
         res.status(500).json({ data: null, error: 'Internal server error' });
+    }
+});
+// POST /api/owner/upload - upload photo to cloudinary
+router.post('/upload', upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            res.status(400).json({ data: null, error: 'No file uploaded' });
+            return;
+        }
+        const { buffer } = req.file;
+        // Use a Promise to handle the stream upload
+        const result = await new Promise((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream({ folder: 'salon_stylists', resource_type: 'auto' }, (error, result) => {
+                if (error)
+                    return reject(error);
+                resolve(result);
+            });
+            uploadStream.end(buffer);
+        });
+        res.json({ data: { secure_url: result.secure_url }, error: null });
+    }
+    catch (err) {
+        console.error('[owner/upload] Error:', err);
+        res.status(500).json({ data: null, error: 'Internal server error during upload' });
     }
 });
 // POST /api/owner/stylists — add stylist
@@ -264,6 +310,109 @@ router.get('/appointments', async (req, res) => {
     }
     catch (err) {
         console.error('[owner/appointments] Error:', err);
+        res.status(500).json({ data: null, error: 'Internal server error' });
+    }
+});
+// PATCH /api/owner/appointments/:id/cancel - cancel appointment
+router.patch('/appointments/:id/cancel', async (req, res) => {
+    try {
+        const id = req.params.id;
+        const salonId = process.env.SALON_ID;
+        // Verify it belongs to this salon
+        const appt = await prisma.appointment.findUnique({
+            where: { id },
+            include: { stylist: true },
+        });
+        if (!appt || appt.stylist.salonId !== salonId) {
+            res.status(404).json({ data: null, error: 'Appointment not found' });
+            return;
+        }
+        if (appt.status === 'CANCELLED') {
+            res.status(400).json({ data: null, error: 'Appointment is already cancelled' });
+            return;
+        }
+        const updated = await prisma.appointment.update({
+            where: { id },
+            data: { status: 'CANCELLED' },
+            include: { stylist: { select: { name: true, photoUrl: true } } },
+        });
+        res.json({ data: updated, error: null });
+    }
+    catch (err) {
+        console.error('[owner/appointments/:id/cancel] Error:', err);
+        res.status(500).json({ data: null, error: 'Internal server error' });
+    }
+});
+// GET /api/owner/export-data - fetch raw records for Excel writing
+router.get('/export-data', async (req, res) => {
+    try {
+        const salonId = process.env.SALON_ID;
+        if (!salonId) {
+            res.status(500).json({ data: null, error: 'SALON_ID not configured' });
+            return;
+        }
+        const [stylists, upcomingBookings, revenues] = await Promise.all([
+            prisma.stylist.findMany({
+                where: { salonId }
+            }),
+            prisma.appointment.findMany({
+                where: {
+                    stylist: { salonId },
+                    status: 'CONFIRMED',
+                    startTime: { gte: new Date() }
+                },
+                include: { stylist: { select: { name: true } } },
+                orderBy: { startTime: 'asc' }
+            }),
+            prisma.appointment.findMany({
+                where: {
+                    stylist: { salonId },
+                    status: 'COMPLETED'
+                },
+                include: { stylist: { select: { name: true } } },
+                orderBy: { startTime: 'desc' }
+            })
+        ]);
+        // Format Data logically for worksheet conversion
+        const formattedStylists = stylists.map(s => ({
+            ID: s.id,
+            Name: s.name,
+            Specialties: s.specialties.join(', '),
+            Slot_Duration_Mins: s.slotDuration,
+            Active: s.isActive ? 'Yes' : 'No'
+        }));
+        const formattedUpcoming = upcomingBookings.map(b => ({
+            ID: b.id,
+            Customer: b.customerName,
+            Phone: b.customerPhone || 'N/A',
+            Email: b.customerEmail || 'N/A',
+            Stylist: b.stylist?.name || 'N/A',
+            Service: b.service,
+            Start_Time: b.startTime,
+            End_Time: b.endTime,
+            Walk_In: b.isWalkIn ? 'Yes' : 'No',
+            Price_Assigned: b.price ? Number(b.price) : 0
+        }));
+        const formattedRevenues = revenues.map(r => ({
+            ID: r.id,
+            Customer: r.customerName,
+            Stylist: r.stylist?.name || 'N/A',
+            Service: r.service,
+            Start_Time: r.startTime,
+            Price_Earned: r.price ? Number(r.price) : 0,
+            Walk_In: r.isWalkIn ? 'Yes' : 'No'
+        }));
+        res.json({
+            data: {
+                stylists: formattedStylists,
+                upcomingBookings: formattedUpcoming,
+                revenues: formattedRevenues
+            },
+            error: null
+        });
+    }
+    catch (err) {
+        console.error('[owner/export-data] Error:', err);
         res.status(500).json({ data: null, error: 'Internal server error' });
     }
 });

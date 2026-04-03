@@ -5,6 +5,19 @@ import { dayjs, todayInTz, getDayBoundsUtc, getWeekBoundsUtc } from '../lib/time
 
 const router = Router();
 
+import multer from 'multer';
+import { v2 as cloudinary } from 'cloudinary';
+
+// Configure cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+// Configure multer
+const upload = multer({ storage: multer.memoryStorage() });
+
 // All owner routes require OWNER role
 router.use(requireAuth('OWNER'));
 
@@ -147,6 +160,35 @@ router.get('/dashboard', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[owner/dashboard] Error:', err);
     res.status(500).json({ data: null, error: 'Internal server error' });
+  }
+});
+
+// POST /api/owner/upload - upload photo to cloudinary
+router.post('/upload', upload.single('file'), async (req: Request, res: Response) => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ data: null, error: 'No file uploaded' });
+      return;
+    }
+
+    const { buffer } = req.file;
+
+    // Use a Promise to handle the stream upload
+    const result = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        { folder: 'salon_stylists', resource_type: 'auto' },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result);
+        }
+      );
+      uploadStream.end(buffer);
+    });
+
+    res.json({ data: { secure_url: (result as any).secure_url }, error: null });
+  } catch (err) {
+    console.error('[owner/upload] Error:', err);
+    res.status(500).json({ data: null, error: 'Internal server error during upload' });
   }
 });
 
